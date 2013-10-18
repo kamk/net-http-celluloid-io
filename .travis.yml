@@ -1,0 +1,9 @@
+script: bundle exec rspec spec/*_spec.rb
+rvm:
+  - 2.0.0
+  - rbx-19mode
+  - jruby-19mode
+  - ruby-head
+matrix:
+  allow_failures:
+    - rvm: ruby-head
