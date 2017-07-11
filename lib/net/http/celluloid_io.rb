@@ -40,7 +40,8 @@ class Net::HTTP::CelluloidIO < Net::HTTP
     if Celluloid.actor? && Celluloid.current_actor.kind_of?(Celluloid::IO)
       connect_celluloid
     else
-      super.connect
+      D "using original Net::HTTP#connect"
+      super
     end
   end
   
