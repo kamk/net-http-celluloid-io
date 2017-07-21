@@ -108,30 +108,23 @@ class Net::HTTP::CelluloidIO < Net::HTTP
           HTTPResponse.read_new(@socket).value
         end
         # Server Name Indication (SNI) RFC 3546
-        s.hostname = @address if s.respond_to? :hostname=
+        s.to_io.hostname = @address if s.to_io.respond_to? :hostname=
         if @ssl_session and
            Process.clock_gettime(Process::CLOCK_REALTIME) < @ssl_session.time.to_f + @ssl_session.timeout
-          s.session = @ssl_session if @ssl_session
+          s.to_io.session = @ssl_session if @ssl_session
         end
-        if timeout = @open_timeout
-          while true
-            raise Net::OpenTimeout if timeout <= 0
-            start = Process.clock_gettime Process::CLOCK_MONOTONIC
-            # to_io is required because SSLSocket doesn't have wait_readable yet
-            case s.connect_nonblock(exception: false)
-            when :wait_readable; s.to_io.wait_readable(timeout)
-            when :wait_writable; s.to_io.wait_writable(timeout)
-            else; break
-            end
-            timeout -= Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
+        Timeout.timeout(@open_timeout, Net::OpenTimeout) {
+          begin
+            s.connect
+          rescue => e
+            raise e, "Failed SSL connection to " +
+              "#{conn_address}:#{conn_port} (#{e.message})"
           end
-        else
-          s.connect
-        end
+        }
         if @ssl_context.verify_mode != OpenSSL::SSL::VERIFY_NONE
-          s.post_connection_check(@address)
+          s.to_io.post_connection_check(@address)
         end
-        @ssl_session = s.session
+        @ssl_session = s.to_io.session
       rescue => exception
         D "Conn close because of connect error #{exception}"
         @socket.close if @socket and not @socket.closed?
