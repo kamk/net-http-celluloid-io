@@ -133,4 +133,30 @@ class Net::HTTP::CelluloidIO < Net::HTTP
     end
     on_connect
   end
+  
+  
+  def begin_transport(req)
+    if @socket.closed?
+      connect
+    elsif @last_communicated
+      io = @socket.io.to_io
+      io = io.to_io if io.class == OpenSSL::SSL::SSLSocket
+      if @last_communicated + @keep_alive_timeout < Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        D 'Conn close because of keep_alive_timeout'
+        @socket.close
+        connect
+      elsif io.wait_readable(0) && @socket.eof?
+        D "Conn close because of EOF"
+        @socket.close
+        connect
+      end
+    end
+
+    if not req.response_body_permitted? and @close_on_empty_response
+      req['connection'] ||= 'close'
+    end
+
+    req.update_uri address, port, use_ssl?
+    req['host'] ||= addr_port()
+  end
 end
