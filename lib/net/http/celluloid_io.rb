@@ -136,7 +136,7 @@ class Net::HTTP::CelluloidIO < Net::HTTP
   
   
   def begin_transport(req)
-    if @socket.closed?
+    if @socket.nil? || @socket.closed?
       connect
     elsif @last_communicated
       io = @socket.io.to_io
