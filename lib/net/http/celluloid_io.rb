@@ -74,6 +74,22 @@ class Net::HTTP::CelluloidIO < Net::HTTP
     s.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
     D "opened"
     if use_ssl?
+      if proxy?
+        plain_sock = BufferedIO.new(s, read_timeout: @read_timeout,
+                                    continue_timeout: @continue_timeout,
+                                    debug_output: @debug_output)
+        buf = "CONNECT #{@address}:#{@port} HTTP/#{HTTPVersion}\r\n"
+        buf << "Host: #{@address}:#{@port}\r\n"
+        if proxy_user
+          credential = ["#{proxy_user}:#{proxy_pass}"].pack('m0')
+          buf << "Proxy-Authorization: Basic #{credential}\r\n"
+        end
+        buf << "\r\n"
+        plain_sock.write(buf)
+        HTTPResponse.read_new(plain_sock).value
+        # assuming nothing left in buffers after successful CONNECT response
+      end
+      
       ssl_parameters = Hash.new
       iv_list = instance_variables
       SSL_IVNAMES.each_with_index do |ivname, i|
@@ -87,51 +103,36 @@ class Net::HTTP::CelluloidIO < Net::HTTP
       D "starting SSL for #{conn_address}:#{conn_port}..."
       s = ::Celluloid::IO::SSLSocket.new(s, @ssl_context)
       s.sync_close = true
+      # Server Name Indication (SNI) RFC 3546
+      s.to_io.hostname = @address if s.to_io.respond_to? :hostname=
+      if @ssl_session and
+         Process.clock_gettime(Process::CLOCK_REALTIME) < @ssl_session.time.to_f + @ssl_session.timeout
+        s.to_io.session = @ssl_session if @ssl_session
+      end
+      Timeout.timeout(@open_timeout, Net::OpenTimeout) {
+        begin
+          s.connect
+        rescue => e
+          raise e, "Failed SSL connection to " +
+            "#{conn_address}:#{conn_port} (#{e.message})"
+        end
+      }
+      if @ssl_context.verify_mode != OpenSSL::SSL::VERIFY_NONE
+        s.to_io.post_connection_check(@address)
+      end
+      @ssl_session = s.to_io.session
       D "SSL established"
     end
-    @socket = BufferedIO.new(s)
-    @socket.read_timeout = @read_timeout
-    @socket.continue_timeout = @continue_timeout
-    @socket.debug_output = @debug_output
-    if use_ssl?
-      begin
-        if proxy?
-          buf = "CONNECT #{@address}:#{@port} HTTP/#{HTTPVersion}\r\n"
-          buf << "Host: #{@address}:#{@port}\r\n"
-          if proxy_user
-            credential = ["#{proxy_user}:#{proxy_pass}"].pack('m')
-            credential.delete!("\r\n")
-            buf << "Proxy-Authorization: Basic #{credential}\r\n"
-          end
-          buf << "\r\n"
-          @socket.write(buf)
-          HTTPResponse.read_new(@socket).value
-        end
-        # Server Name Indication (SNI) RFC 3546
-        s.to_io.hostname = @address if s.to_io.respond_to? :hostname=
-        if @ssl_session and
-           Process.clock_gettime(Process::CLOCK_REALTIME) < @ssl_session.time.to_f + @ssl_session.timeout
-          s.to_io.session = @ssl_session if @ssl_session
-        end
-        Timeout.timeout(@open_timeout, Net::OpenTimeout) {
-          begin
-            s.connect
-          rescue => e
-            raise e, "Failed SSL connection to " +
-              "#{conn_address}:#{conn_port} (#{e.message})"
-          end
-        }
-        if @ssl_context.verify_mode != OpenSSL::SSL::VERIFY_NONE
-          s.to_io.post_connection_check(@address)
-        end
-        @ssl_session = s.to_io.session
-      rescue => exception
-        D "Conn close because of connect error #{exception}"
-        @socket.close if @socket and not @socket.closed?
-        raise exception
-      end
-    end
+    @socket = BufferedIO.new(s, read_timeout: @read_timeout,
+                             continue_timeout: @continue_timeout,
+                             debug_output: @debug_output)
     on_connect
+  rescue => exception
+    if s
+      D "Conn close because of connect error #{exception}"
+      s.close
+    end
+    raise
   end
   
   
