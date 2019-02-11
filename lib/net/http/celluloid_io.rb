@@ -32,9 +32,25 @@ class Net::HTTP::CelluloidIO < Net::HTTP
     include Timeout
 
     def rbuf_fill
-      Timeout.timeout(@read_timeout, Net::ReadTimeout) do
-        @rbuf << @io.readpartial(BUFSIZE)
-      end
+      sock_io = @io.to_io
+      sock_io = sock_io.to_io if sock_io.class == OpenSSL::SSL::SSLSocket
+
+      case rv = @io.read_nonblock(BUFSIZE, exception: false)
+      when String
+        @rbuf << rv
+        rv.clear
+        return
+      when :wait_readable
+        sock_io.wait_readable(@read_timeout) or raise Net::ReadTimeout
+        # continue looping
+      when :wait_writable
+        # OpenSSL::Buffering#read_nonblock may fail with IO::WaitWritable.
+        # http://www.openssl.org/support/faq.html#PROG10
+        sock_io.wait_writable(@read_timeout) or raise Net::ReadTimeout
+        # continue looping
+      when nil
+        raise EOFError, 'end of file reached'
+      end while true
     end
   end
 
