@@ -116,6 +116,10 @@ class Net::HTTP::CelluloidIO < Net::HTTP
       end
       @ssl_context = OpenSSL::SSL::SSLContext.new
       @ssl_context.set_params(ssl_parameters)
+      @ssl_context.session_cache_mode =
+        OpenSSL::SSL::SSLContext::SESSION_CACHE_CLIENT |
+        OpenSSL::SSL::SSLContext::SESSION_CACHE_NO_INTERNAL_STORE
+      @ssl_context.session_new_cb = proc {|sock, sess| @ssl_session = sess }
       D "starting SSL for #{conn_address}:#{conn_port}..."
       s = ::Celluloid::IO::SSLSocket.new(s, @ssl_context)
       s.sync_close = true
